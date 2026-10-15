@@ -17,7 +17,7 @@ from src.data_processing import CLASSES, load_meta, load_split
 from src.evaluate import SEEDS, confusion
 from src.features import build_features
 from src.models import CNN1D
-from src.train import predict, to_tensor
+from src.train import add_rhythm, predict, to_tensor
 
 
 def ms(agg, key, i=None):
@@ -27,6 +27,37 @@ def ms(agg, key, i=None):
 
 def fmt(t):
     return "  n/a  " if np.isnan(t[0]) else f"{t[0]:.3f}±{t[1]:.3f}"
+
+
+def fig_confusions(rf_cm, cnn_cm, out, cnn_name):
+    """Matrices de confusion RF et CNN côte à côte (test, % par ligne, moyenne sur les seeds)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from src.eda import BLUE_RAMP, INK, style
+    style()
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
+    for ax, cm, title in zip(axes, (rf_cm, cnn_cm), ("RF (morphologie + RR)", f"CNN 1D ({cnn_name})")):
+        cmn = cm / np.maximum(cm.sum(axis=1, keepdims=True), 1)
+        ax.imshow(cmn, cmap=BLUE_RAMP, vmin=0, vmax=1)
+        for i in range(len(CLASSES)):
+            for j in range(len(CLASSES)):
+                ax.text(j, i, f"{100 * cmn[i, j]:.1f}%\n({cm[i, j]:.0f})", ha="center", va="center",
+                        fontsize=8.5, color="white" if cmn[i, j] > 0.5 else INK)
+        ax.set_xticks(range(5), CLASSES)
+        ax.set_yticks(range(5), CLASSES)
+        ax.set_xlabel("Classe prédite")
+        ax.set_ylabel("Classe réelle")
+        ax.grid(False)
+        ax.set_title(title)
+    fig.suptitle("Matrices de confusion sur le test (% par ligne, effectifs moyens entre parenthèses)",
+                 x=0.01, ha="left", fontsize=12, fontweight="semibold")
+    fig.tight_layout()
+    path = out / "figures" / f"08_confusion_rf_vs_{cnn_name}.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("->", path)
 
 
 def main():
@@ -40,6 +71,8 @@ def main():
     cnn = json.loads((args.results / f"{args.cnn}.json").read_text())
     rf_t = {k: rf[k]["test"] for k in ("morph", "rr", "all")}
     cnn_t = cnn["agg"]["test"]
+
+    fig_confusions(np.asarray(rf_t["all"]["cm"]["mean"]), np.asarray(cnn_t["cm"]["mean"]), args.results, args.cnn)
 
     print("=== 1. Métriques globales (test, moyenne ± écart-type sur les seeds) ===")
     print(f"{'modèle':>22} {'accuracy':>14} {'macro-F1 (N,S,V,F)':>20}")
@@ -62,14 +95,14 @@ def main():
 
     # ---- prédictions du CNN (toutes seeds) et RF seed 0, pour les analyses par patient
     meta = load_meta(args.processed)
-    data = {s: load_split(args.processed, s) for s in ("train", "test")}
-    Xte, _ = to_tensor(data["test"])
+    data = add_rhythm({s: load_split(args.processed, s) for s in ("train", "test")})
+    Xte, Rte, _ = to_tensor(data["test"])
     y, rec, rr = data["test"]["y"], data["test"]["rec"], data["test"]["rr"]
     preds = []
     for seed in SEEDS:
         m = CNN1D()
         m.load_state_dict(torch.load(args.results / "models" / f"{args.cnn}_seed{seed}.pt"))
-        preds.append(predict(m, Xte, "cpu"))
+        preds.append(predict(m, Xte, Rte, "cpu"))
     Xf = {s: build_features(data[s], meta["pre"], "all")[0] for s in data}
     rf_model = RandomForestClassifier(300, class_weight="balanced_subsample", min_samples_leaf=2,
                                       n_jobs=-1, random_state=0).fit(Xf["train"], data["train"]["y"])

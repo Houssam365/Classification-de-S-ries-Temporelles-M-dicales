@@ -84,6 +84,15 @@ def rr_feature_matrix(rr: np.ndarray) -> np.ndarray:
     return out
 
 
+def rhythm_relative(rr: np.ndarray) -> np.ndarray:
+    """Log-ratios RR relatifs (N, 3) : log(préc./moy. locale), log(suiv./moy. locale), log(préc./suiv.).
+
+    Sans aucune valeur absolue : le modèle ne peut pas s'appuyer sur la fréquence cardiaque propre à un patient.
+    """
+    pre, post, local = rr[:, 0], rr[:, 1], rr[:, 2]
+    return np.log(np.stack([pre / local, post / local, pre / post], axis=1)).astype(np.float32)
+
+
 def build_features(split: dict, pre: int, kind: str = "all"):
     """kind : 'morph' | 'rr' | 'all'. Retourne (matrice, noms)."""
     parts, names = [], []

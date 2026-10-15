@@ -19,9 +19,10 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.data_processing import CLASSES, load_meta, load_split
 from src.evaluate import SEEDS, aggregate, format_report, summarize
-from src.models import CNN1D
+from src.features import rhythm_relative
+from src.models import CNN1D, CNNRhythm
 
-MODELS = {"cnn1d": CNN1D}
+MODELS = {"cnn1d": CNN1D, "cnn_rhythm": CNNRhythm}
 
 
 def set_seed(seed):
@@ -42,39 +43,54 @@ def class_weights(y, mode, cap=None):
     return np.minimum(w, cap).astype(np.float32)
 
 
+def add_rhythm(data):
+    """Ajoute data[split]["r"] : RR relatifs (log-ratios) standardisés avec les statistiques du train."""
+    raw = {s: rhythm_relative(d["rr"]) for s, d in data.items()}
+    mu, sd = raw["train"].mean(axis=0), raw["train"].std(axis=0)
+    for s, d in data.items():
+        d["r"] = ((raw[s] - mu) / sd).astype(np.float32)
+    return data
+
+
 def to_tensor(split):
-    return torch.from_numpy(split["X"]).unsqueeze(1), torch.from_numpy(split["y"])
+    return (torch.from_numpy(split["X"]).unsqueeze(1), torch.from_numpy(split["r"]),
+            torch.from_numpy(split["y"]))
 
 
 @torch.no_grad()
-def predict(model, X, device, batch=2048):
+def predict(model, X, R, device, batch=2048):
     model.eval()
-    return torch.cat([model(X[i:i + batch].to(device)).argmax(1).cpu() for i in range(0, len(X), batch)]).numpy()
+    out = []
+    for i in range(0, len(X), batch):
+        xb = X[i:i + batch].to(device)
+        logits = model(xb, R[i:i + batch].to(device)) if model.uses_rhythm else model(xb)
+        out.append(logits.argmax(1).cpu())
+    return torch.cat(out).numpy()
 
 
 def train_one(model_name, data, weights, seed, epochs, patience, lr, batch, device):
     set_seed(seed)
-    Xtr, ytr = to_tensor(data["train"])
-    Xva, yva = to_tensor(data["val"])
-    Xte, _ = to_tensor(data["test"])
+    Xtr, Rtr, ytr = to_tensor(data["train"])
+    Xva, Rva, yva = to_tensor(data["val"])
+    Xte, Rte, _ = to_tensor(data["test"])
     model = MODELS[model_name]().to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(weights).to(device))
     gen = torch.Generator().manual_seed(seed)
-    loader = DataLoader(TensorDataset(Xtr, ytr), batch_size=batch, shuffle=True, generator=gen)
+    loader = DataLoader(TensorDataset(Xtr, Rtr, ytr), batch_size=batch, shuffle=True, generator=gen)
 
     best, best_state, wait, hist = -1.0, None, 0, []
     for epoch in range(epochs):
         model.train()
         total = 0.0
-        for xb, yb in loader:
-            xb, yb = xb.to(device), yb.to(device)
+        for xb, rb, yb in loader:
+            xb, rb, yb = xb.to(device), rb.to(device), yb.to(device)
             opt.zero_grad()
-            loss = loss_fn(model(xb), yb)
+            loss = loss_fn(model(xb, rb) if model.uses_rhythm else model(xb), yb)
             loss.backward()
             opt.step()
             total += loss.item() * len(xb)
-        val = summarize(data["val"]["y"], predict(model, Xva, device))
+        val = summarize(data["val"]["y"], predict(model, Xva, Rva, device))
         hist.append({"epoch": epoch + 1, "train_loss": total / len(Xtr), "val_macro_f1": val["macro_f1_main"],
                      "val_acc": val["accuracy"]})
         if val["macro_f1_main"] > best:          # sélection du modèle sur la validation uniquement
@@ -85,8 +101,8 @@ def train_one(model_name, data, weights, seed, epochs, patience, lr, batch, devi
             if wait >= patience:
                 break
     model.load_state_dict(best_state)
-    out = {"val": summarize(data["val"]["y"], predict(model, Xva, device)),
-           "test": summarize(data["test"]["y"], predict(model, Xte, device)),
+    out = {"val": summarize(data["val"]["y"], predict(model, Xva, Rva, device)),
+           "test": summarize(data["test"]["y"], predict(model, Xte, Rte, device)),
            "history": hist, "best_epoch": int(np.argmax([h["val_macro_f1"] for h in hist]) + 1)}
     return out, best_state
 
@@ -118,7 +134,7 @@ def main():
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    data = {s: load_split(args.processed, s) for s in ("train", "val", "test")}
+    data = add_rhythm({s: load_split(args.processed, s) for s in ("train", "val", "test")})
     w = class_weights(data["train"]["y"], args.weights, args.cap)
     tag = f"{args.model}_{args.weights}"
     print(f"{tag} | device={device} | seeds={args.seeds} | poids {dict(zip(CLASSES, w.round(2)))}")
