@@ -95,7 +95,7 @@ def train_one(model_name, data, weights, seed, epochs, patience, lr, batch, devi
                      "val_acc": val["accuracy"]})
         if val["macro_f1_main"] > best:          # sélection du modèle sur la validation uniquement
             best, wait = val["macro_f1_main"], 0
-            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         else:
             wait += 1
             if wait >= patience:

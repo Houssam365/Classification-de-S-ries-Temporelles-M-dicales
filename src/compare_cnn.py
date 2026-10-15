@@ -35,7 +35,7 @@ def load_preds(tag, results, X, R):
     preds = []
     for seed in SEEDS:
         m = MODELS[model_name]()
-        m.load_state_dict(torch.load(results / "models" / f"{tag}_seed{seed}.pt"))
+        m.load_state_dict(torch.load(results / "models" / f"{tag}_seed{seed}.pt", map_location="cpu"))
         preds.append(predict(m, X, R, "cpu"))
     return preds
 

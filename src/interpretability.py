@@ -124,7 +124,7 @@ def main():
     data = add_rhythm({s: load_split(args.processed, s) for s in ("train", "test")})
     X, R, y = to_tensor(data["test"])
     model = MODELS[args.tag.rsplit("_", 1)[0]]()
-    model.load_state_dict(torch.load(args.results / "models" / f"{args.tag}_seed{args.seed}.pt"))
+    model.load_state_dict(torch.load(args.results / "models" / f"{args.tag}_seed{args.seed}.pt", map_location="cpu"))
 
     cam, pred = compute_all(model, X, R, y)          # cible = vraie classe
     y_np, Xn = y.numpy(), X.numpy()

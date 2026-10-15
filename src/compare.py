@@ -101,7 +101,7 @@ def main():
     preds = []
     for seed in SEEDS:
         m = CNN1D()
-        m.load_state_dict(torch.load(args.results / "models" / f"{args.cnn}_seed{seed}.pt"))
+        m.load_state_dict(torch.load(args.results / "models" / f"{args.cnn}_seed{seed}.pt", map_location="cpu"))
         preds.append(predict(m, Xte, Rte, "cpu"))
     Xf = {s: build_features(data[s], meta["pre"], "all")[0] for s in data}
     rf_model = RandomForestClassifier(300, class_weight="balanced_subsample", min_samples_leaf=2,
