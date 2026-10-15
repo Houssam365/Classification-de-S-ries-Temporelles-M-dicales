@@ -66,8 +66,9 @@ class CNNLSTMAttention(nn.Module):
     """CNN par battement + BiLSTM sur K battements consécutifs + attention sur la séquence.
 
     - Encodeur : même tronc convolutif que CNN1D, appliqué à chaque battement (poids partagés).
-    - Rythme : pour chaque battement de la fenêtre, log(RR précédent) centré sur la médiane de la fenêtre,
-      donc relatif (aucune fréquence cardiaque absolue), projeté puis concaténé à l'embedding de forme.
+    - Rythme : pour chaque battement de la fenêtre, log(RR précédent / moyenne des 10 RR précédents), donc relatif
+      (aucune fréquence cardiaque absolue), projeté puis concaténé à l'embedding de forme. Avec `center_window`,
+      c'est la première version : log(RR précédent) centré sur la médiane de la fenêtre.
     - BiLSTM sur les K pas, attention additive masquée (les battements factices en bord de record sont ignorés),
       puis classification à partir de [contexte pondéré ; état du battement central].
 
@@ -78,10 +79,11 @@ class CNNLSTMAttention(nn.Module):
     uses_sequence = True
 
     def __init__(self, n_classes=5, channels=(32, 64, 128), kernels=(7, 5, 3), k=9, rr_dim=16, hidden=64,
-                 dropout=0.3):
+                 dropout=0.3, center_window=False):
         super().__init__()
         c1, c2, c3 = channels
         self.k = k
+        self.center_window = center_window     # True : première version (log-RR brut centré sur la médiane de la fenêtre)
         self.features = nn.Sequential(
             conv_block(1, c1, kernels[0], pool=True),
             conv_block(c1, c2, kernels[1], pool=True),
@@ -99,7 +101,9 @@ class CNNLSTMAttention(nn.Module):
         ew = emb.unfold(1, self.k, 1).permute(0, 1, 3, 2).reshape(-1, self.k, emb.shape[-1])
         lw = lr.unfold(1, self.k, 1).reshape(-1, self.k)
         mask = ~torch.isnan(lw)
-        rel = torch.nan_to_num(lw - torch.nanmedian(lw, dim=1, keepdim=True).values, nan=0.0)
+        if self.center_window:
+            lw = lw - torch.nanmedian(lw, dim=1, keepdim=True).values
+        rel = torch.nan_to_num(lw, nan=0.0)
         feats = torch.cat([ew, self.rr_proj(rel.unsqueeze(-1))], dim=-1) * mask.unsqueeze(-1)
         out, _ = self.lstm(feats)
         scores = self.att(out).squeeze(-1).masked_fill(~mask, -1e9)

@@ -49,7 +49,7 @@ def main():
     R = args.results
 
     rf = json.loads((R / "rf_baseline.json").read_text())["all"]["test"]
-    runs = {"CNN": "cnn1d_sqrt", "CNN+rythme": "cnn_rhythm_sqrt", "CNN-LSTM": "cnn_lstm_sqrt"}
+    runs = {"CNN": "cnn1d_sqrt", "CNN+rythme": "cnn_rhythm_sqrt", "CNN-LSTM": "cnn_lstm_local_sqrt"}
     J = {n: json.loads((R / f"{t}.json").read_text()) for n, t in runs.items()}
     agg = {"RF": rf, **{n: j["agg"]["test"] for n, j in J.items()}}
 
@@ -81,7 +81,7 @@ def main():
     X, Rh, _ = to_tensor(data["test"])
     y, rec, rr = data["test"]["y"], data["test"]["rec"], data["test"]["rr"]
     preds = {"CNN": load_preds("cnn1d_sqrt", R, X, Rh), "CNN+rythme": load_preds("cnn_rhythm_sqrt", R, X, Rh),
-             "CNN-LSTM": [np.load(R / "preds" / f"cnn_lstm_sqrt_seed{s}.npy") for s in SEEDS]}
+             "CNN-LSTM": [np.load(R / "preds" / f"cnn_lstm_local_sqrt_seed{s}.npy") for s in SEEDS]}
     for n, ps in preds.items():       # cohérence avec les métriques enregistrées
         assert abs(np.mean([(p == y).mean() for p in ps]) - float(J[n]["agg"]["test"]["accuracy"]["mean"])) < 1e-6, n
 
@@ -118,7 +118,7 @@ def main():
         print(f"{c:>4} " + " ".join(f"{v:>8.0f}" for v in cms[2][i]))
 
     print("\n=== 7. Poids d'attention du CNN-LSTM (test, moyenne des seeds, par classe réelle) ===")
-    attn = np.mean([np.load(R / "attn" / f"cnn_lstm_sqrt_seed{s}.npy") for s in SEEDS], axis=0)
+    attn = np.mean([np.load(R / "attn" / f"cnn_lstm_local_sqrt_seed{s}.npy") for s in SEEDS], axis=0)
     k = attn.shape[1]
     by_class = {c: attn[y == i].mean(0) for i, c in enumerate(CLASSES[:4])}
     print(f"{'':>4}" + "".join(f"{p:>8}" for p in [f"{q:+d}" if q else "centre" for q in range(-(k // 2), k // 2 + 1)]))

@@ -51,7 +51,7 @@ def predict_seq(model, seq, device, batch_chunks=32):
 
 def train_one(seqs, labels, weights, seed, args, device):
     set_seed(seed)
-    model = CNNLSTMAttention(k=args.k).to(device)
+    model = CNNLSTMAttention(k=args.k, center_window=args.rr_ref == "window").to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(weights).to(device), ignore_index=-1)
     rng = np.random.default_rng(seed)
@@ -93,6 +93,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--weights", choices=["none", "sqrt", "inv"], default="sqrt")
     p.add_argument("--k", type=int, default=9, help="battements par séquence (impair)")
+    p.add_argument("--rr-ref", choices=["local", "window"], default="local",
+                   help="référence du rythme : moyenne des 10 RR précédents (local) ou médiane de la fenêtre (window)")
     p.add_argument("--t", type=int, default=40, help="taille des blocs encodés d'un coup")
     p.add_argument("--seeds", type=int, nargs="*", default=list(SEEDS))
     p.add_argument("--epochs", type=int, default=40)
@@ -105,11 +107,11 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     data = {s: load_split(args.processed, s) for s in ("train", "val", "test")}
-    seqs = {s: build_sequences(d, args.k, args.t) for s, d in data.items()}
+    seqs = {s: build_sequences(d, args.k, args.t, args.rr_ref) for s, d in data.items()}
     labels = {s: d["y"] for s, d in data.items()}
     w = class_weights(data["train"]["y"], args.weights)
-    tag = f"cnn_lstm_{args.weights}"
-    print(f"{tag} | K={args.k}, blocs de {args.t} | device={device} | seeds={args.seeds} | "
+    tag = f"cnn_lstm_{args.weights}" if args.rr_ref == "window" else f"cnn_lstm_{args.rr_ref}_{args.weights}"
+    print(f"{tag} | K={args.k}, blocs de {args.t}, rythme={args.rr_ref} | device={device} | seeds={args.seeds} | "
           f"poids {dict(zip(CLASSES, w.round(2)))}")
     for d in ("models", "preds", "attn"):
         (args.out / d).mkdir(parents=True, exist_ok=True)

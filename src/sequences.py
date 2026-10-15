@@ -9,11 +9,16 @@ recouvrent de 2h battements, et chaque record est complété par h battements fa
 import numpy as np
 
 
-def build_sequences(split: dict, k: int = 9, t: int = 40) -> dict:
+def build_sequences(split: dict, k: int = 9, t: int = 40, rr_ref: str = "local") -> dict:
+    """rr_ref : "local" = log(RR précédent / moyenne des 10 RR précédents) par battement (référence causale,
+    indépendante de la fenêtre) ; "window" = log(RR précédent) brut, à centrer sur la médiane de la fenêtre
+    dans le modèle (première version, défaillante quand des S consécutifs dominent la fenêtre)."""
     h, stride = k // 2, t - 2 * (k // 2)
     assert t > 2 * h
     rec, X, y = split["rec"], split["X"], split["y"]
-    log_rr = np.log(split["rr"][:, 0]).astype(np.float32)          # RR précédent (s), en log ; centré dans le modèle
+    assert rr_ref in ("local", "window")
+    col = 3 if rr_ref == "local" else 0                            # rr[:, 3] = RR précédent / moyenne locale ; rr[:, 0] = RR précédent (s)
+    log_rr = np.log(split["rr"][:, col]).astype(np.float32)
 
     cuts = np.flatnonzero(rec[1:] != rec[:-1]) + 1
     runs = list(zip([0, *cuts], [*cuts, len(rec)]))
@@ -33,4 +38,4 @@ def build_sequences(split: dict, k: int = 9, t: int = 40) -> dict:
         starts.extend(offset + j * stride for j in range(c))
         offset += length
     return {"X": np.concatenate(Xs), "lr": np.concatenate(lrs), "y": np.concatenate(ys),
-            "orig": np.concatenate(origs), "starts": np.array(starts, np.int64), "k": k, "t": t, "n": len(y)}
+            "orig": np.concatenate(origs), "starts": np.array(starts, np.int64), "k": k, "t": t, "n": len(y), "rr_ref": rr_ref}
